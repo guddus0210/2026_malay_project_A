@@ -72,6 +72,11 @@ class VerifyRequest(BaseModel):
 class Token(BaseModel):
     access_token: str
     token_type: str
+    
+class FeedbackRequest(BaseModel):
+    query: str
+    response: str
+    score: int
 
 # Intent classification is now handled by AIEngine.classify_intent()
 # No more hardcoded pattern matching!
@@ -139,6 +144,11 @@ async def chat(request: ChatRequest):
     intent = intent_result.get("intent", "GENERAL")
     search_term = intent_result.get("search_term")
     
+    # Check for past feedback (RLHF Lite)
+    feedback_context = data_engine.get_relevant_feedback(user_message)
+    if feedback_context['good'] or feedback_context['bad']:
+        logger.info(f"Found feedback context: {len(feedback_context['good'])} good, {len(feedback_context['bad'])} bad")
+    
     logger.info(f"Intent classified: {intent}, search_term: {search_term}")
     
     # ===========================================
@@ -196,7 +206,7 @@ async def chat(request: ChatRequest):
         # Otherwise, just general conversation - no special context
     
     # Generate response
-    response = ai_engine.get_response(user_message, data_context=context)
+    response = ai_engine.get_response(user_message, data_context=context, feedback_context=feedback_context)
     
     return {
         "response": response,
@@ -211,6 +221,12 @@ async def logout(request: dict):
     if session_id and session_id in verified_sessions:
         del verified_sessions[session_id]
     return {"success": True}
+
+@app.post("/api/feedback")
+async def save_feedback(request: FeedbackRequest):
+    """Save user feedback for RLHF"""
+    success = data_engine.save_feedback(request.query, request.response, request.score)
+    return {"success": success}
 
 # Mount Static Files
 if os.path.exists("UI_hompage"):

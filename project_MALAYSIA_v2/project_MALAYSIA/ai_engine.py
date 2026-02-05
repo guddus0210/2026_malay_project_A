@@ -138,21 +138,43 @@ User message: """ + user_message
             print(f"Intent classification error: {e}")
             return {"intent": "GENERAL", "search_term": None}
 
-    def get_response(self, user_message, data_context=""):
+    def get_response(self, user_message, data_context="", feedback_context=None):
         """
         Get a response from the local LLM
         """
         try:
             # Build the prompt with context
+            prompt_parts = []
+            
             if data_context:
-                full_prompt = f"""Context Data:
-{data_context}
+                prompt_parts.append(f"Context Data:\n{data_context}")
+            
+            # RLHF Lite: Add Feedback Context
+            if feedback_context:
+                if feedback_context.get('good'):
+                    good_list = "\n".join([f"- {item}" for item in feedback_context['good']])
+                    prompt_parts.append(f"""
+Reference (Past Good Answers):
+The user previously liked these answers for a similar question. Use them as a style/content guide:
+{good_list}
+""")
+                
+                if feedback_context.get('bad'):
+                    bad_list = "\n".join([f"- {item}" for item in feedback_context['bad']])
+                    prompt_parts.append(f"""
+Constraint (Past Bad Answers):
+The user previously disliked these answers for a similar question. Do NOT repeat these mistakes:
+{bad_list}
+""")
 
-User Question: {user_message}
-
-Please answer based on the context data provided above. Be specific and use the data."""
-            else:
-                full_prompt = user_message
+            prompt_parts.append(f"User Question: {user_message}")
+            
+            if data_context:
+                prompt_parts.append("Please answer based on the context data provided above. Be specific and use the data.")
+            elif feedback_context:
+                 prompt_parts.append("Please answer using the feedback references as a guide.")
+            
+            full_prompt = "\n\n".join(prompt_parts)
             
             # Prepare the request
             payload = {

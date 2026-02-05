@@ -320,6 +320,7 @@
         // Session management
         let sessionId = 'session_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
         let verifiedUser = null;
+        let lastUserMessage = "";
 
         function toggleChatbot() {
             const window = document.getElementById('chatbot-window');
@@ -430,6 +431,8 @@
             const message = input.value.trim();
             if (!message) return;
 
+            lastUserMessage = message;
+
             // Add User Message
             appendMessage(message, 'user');
             input.value = '';
@@ -470,6 +473,44 @@
             }
         }
 
+        async function sendFeedback(btn) {
+            const response = btn.getAttribute('data-response');
+            const query = btn.getAttribute('data-query');
+            const score = parseInt(btn.getAttribute('data-score'));
+
+            // UI update (Optimistic)
+            const parent = btn.parentElement;
+            const buttons = parent.querySelectorAll('button');
+            buttons.forEach(b => {
+                b.disabled = true;
+                b.classList.add('opacity-50', 'cursor-not-allowed');
+            });
+
+            const icon = btn.querySelector('.material-icons');
+            if (score === 1) {
+                icon.classList.remove('text-gray-400');
+                icon.classList.add('text-green-500');
+            } else {
+                icon.classList.remove('text-gray-400');
+                icon.classList.add('text-red-500');
+            }
+
+            try {
+                await fetch('/api/feedback', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        query: query,
+                        response: response,
+                        score: score
+                    })
+                });
+                console.log("Feedback sent");
+            } catch (e) {
+                console.error("Feedback failed", e);
+            }
+        }
+
         function appendMessage(text, sender) {
             const container = document.getElementById('chat-messages');
             const div = document.createElement('div');
@@ -485,12 +526,26 @@
                 ? 'bg-primary text-white p-3 rounded-2xl rounded-tr-none shadow-md text-sm'
                 : 'bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-200 p-3 rounded-2xl rounded-tl-none shadow-sm text-sm border border-gray-100 dark:border-gray-600 markdown-body';
 
+            // Escape text for attribute (support both single and double quotes)
+            const safeText = text.replace(/"/g, '&quot;').replace(/'/g, "\\'");
+            const safeQuery = lastUserMessage.replace(/"/g, '&quot;').replace(/'/g, "\\'");
+
             div.innerHTML = `
                 ${avatar}
-                <div class="flex flex-col gap-1 max-w-[80%]">
+                <div class="flex flex-col gap-1 max-w-[80%] group">
                     <div class="${bubbleClass}">
                         <p>${text}</p>
                     </div>
+                    ${!isUser ? `
+                    <div class="flex gap-2 mt-0 ml-2 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+                        <button onclick="sendFeedback(this)" data-response="${safeText}" data-query="${safeQuery}" data-score="1" class="p-1 hover:bg-gray-100 dark:hover:bg-gray-600 rounded-full transition-colors" title="Helpful">
+                            <span class="material-icons text-gray-400 text-[14px]">thumb_up</span>
+                        </button>
+                        <button onclick="sendFeedback(this)" data-response="${safeText}" data-query="${safeQuery}" data-score="-1" class="p-1 hover:bg-gray-100 dark:hover:bg-gray-600 rounded-full transition-colors" title="Not Helpful">
+                            <span class="material-icons text-gray-400 text-[14px]">thumb_down</span>
+                        </button>
+                    </div>
+                    ` : ''}
                 </div>
             `;
 

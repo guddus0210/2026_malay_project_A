@@ -4,26 +4,47 @@ Handles Excel data loading and student verification
 """
 import pandas as pd
 import os
+from datetime import datetime
+import openpyxl
 
 class DataEngine:
-    def __init__(self, excel_path):
-        self.excel_path = excel_path
-        self.df = None
+    def __init__(self, student_data_path="Chatbot_TestData.xlsx", feedback_data_path="feedback.xlsx"):
+        self.student_path = student_data_path
+        self.feedback_path = feedback_data_path
+        self.df = None          # Student Data
+        self.feedback_df = None # Feedback Data
         self.load_data()
 
     def load_data(self):
-        if os.path.exists(self.excel_path):
+        # 1. Load Student Data (Read Only)
+        if os.path.exists(self.student_path):
             try:
-                self.df = pd.read_excel(self.excel_path)
-                print(f"Data Loaded. Columns: {self.df.columns.tolist()}")
-                # Standardize column names
+                self.df = pd.read_excel(self.student_path)
+                print(f"Student Data Loaded. Columns: {self.df.columns.tolist()}")
                 self.df.columns = [str(c).strip() for c in self.df.columns]
             except Exception as e:
-                print(f"Error loading Excel: {e}")
+                print(f"Error loading Student Data: {e}")
                 self.df = pd.DataFrame()
         else:
-            print(f"File not found: {self.excel_path}")
+            print(f"Student Data file not found: {self.student_path}")
             self.df = pd.DataFrame()
+            
+        # 2. Load Feedback Data (Read/Write)
+        if os.path.exists(self.feedback_path):
+            try:
+                self.feedback_df = pd.read_excel(self.feedback_path)
+                print(f"Feedback Data Loaded. Rows: {len(self.feedback_df)}")
+            except Exception as e:
+                print(f"Error loading Feedback Data: {e}. Creating new.")
+                self.feedback_df = pd.DataFrame(columns=["User_Query", "AI_Response", "Score", "Date"])
+        else:
+            print(f"Feedback Log not found. Creating new: {self.feedback_path}")
+            self.feedback_df = pd.DataFrame(columns=["User_Query", "AI_Response", "Score", "Date"])
+            # Create file immediately to ensure permissions
+            try:
+                self.feedback_df.to_excel(self.feedback_path, index=False)
+            except Exception as e:
+                print(f"Error creating feedback file: {e}")
 
     def get_column_names(self):
         """Return available column names"""
@@ -147,6 +168,88 @@ class DataEngine:
         ).any(axis=1)]
         
         return results.head(5).to_dict(orient='records')
+
+    def save_feedback(self, query, response, score):
+        """
+        Save user feedback to 'feedback.xlsx' (Overwrites file safely)
+        Score: 1 (Like), -1 (Dislike)
+        """
+        try:
+            new_entry = {
+                "User_Query": query,
+                "AI_Response": response,
+                "Score": score,
+                "Date": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            }
+            
+            # 1. Update in-memory dataframe
+            new_row_df = pd.DataFrame([new_entry])
+            if self.feedback_df.empty:
+                 self.feedback_df = new_row_df
+            else:
+                 self.feedback_df = pd.concat([self.feedback_df, new_row_df], ignore_index=True)
+            
+            # 2. Save directly to feedback.xlsx (Full Overwrite)
+            # This is the safest way to prevent file corruption
+            self.feedback_df.to_excel(self.feedback_path, index=False)
+            
+            print(f"Feedback saved to {self.feedback_path}: {query[:20]}... Score: {score}")
+            return True
+            
+        except Exception as e:
+            print(f"Critical error in save_feedback: {e}")
+            return False
+
+    def get_relevant_feedback(self, query):
+        """
+        Find past feedback (Good & Bad) for similar queries.
+        Returns: {"good": [list of strings], "bad": [list of strings]}
+        """
+        if self.feedback_df is None or self.feedback_df.empty:
+            return {"good": [], "bad": []}
+        
+        query_words = set(query.lower().split())
+        good_examples = []
+        bad_examples = []
+        
+        for idx, row in self.feedback_df.iterrows():
+            past_query = str(row['User_Query']).lower()
+            past_words = set(past_query.split())
+            
+            # Skip if query is too short
+            if len(past_words) == 0: continue
+
+            # Calculate Jaccard similarity (word overlap)
+            overlap = len(query_words.intersection(past_words))
+            union = len(query_words.union(past_words))
+            
+            if union == 0: continue
+            
+            similarity = overlap / union
+            
+            # Threshold: 30% similarity or check if one contains the other
+            is_similar = False
+            if similarity > 0.3:
+                is_similar = True
+            elif query.lower() in past_query or past_query in query.lower():
+                # Direct substring match
+                is_similar = True
+                
+            if is_similar:
+                response_text = str(row['AI_Response'])
+                # Only add if not duplicate
+                if row['Score'] == 1:
+                    if response_text not in good_examples:
+                        good_examples.append(response_text)
+                elif row['Score'] == -1:
+                     if response_text not in bad_examples:
+                        bad_examples.append(response_text)
+        
+        # Limit to top 3 recent examples to avoid prompt overflow
+        return {
+            "good": good_examples[-3:], 
+            "bad": bad_examples[-3:]
+        }
 
 
 if __name__ == "__main__":
